@@ -1,0 +1,24 @@
+hardware:
+  atmelICE:
+    device_type: HID
+    serial: J42700054033
+
+  aardvark:
+    device_type: USB
+    usb_vendor: 0x0403
+    usb_product: 0xe0d0
+    usb_serial: TPCFWIIe
+    aa_serial: 2239478364
+
+  serial:
+    device_type: TTY
+    usb_vendor: 0x0403
+    usb_product: 0x6001
+    usb_serial: FT86I2SB
+    name_in_container: ttyUSB0
+
+  logic:
+    device_type: USB
+    usb_vendor: 0x0925
+    usb_product: 0x3881
+    usb_serial: 0
