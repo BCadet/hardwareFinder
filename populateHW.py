@@ -2,71 +2,26 @@
 import logging
 
 class HWFinder():
-    
-    def find_hid(self, hw_name, hw):
-        from os import listdir
-        self.log.debug(f'finding HID {hw_name}')
-        hidraws = listdir('/sys/class/hidraw/')
-        for hidraw in hidraws:
-            with open(f'/sys/class/hidraw/{hidraw}/device/uevent') as f:
-                lines = f.readlines()
-                for row in lines:
-                    if row.find('HID_UNIQ') != -1:
-                        hid_serial = row.strip().split('=')[1]
-                        if hid_serial == hw['serial']:
-                            path = f'/dev/{hidraw}'
-                            self.log.info(f'Found device {hw_name} at address {path}')
-                            return path
-        raise Exception(f'Device {hw_name} of type HID with serial {hw["serial"]} not found')
-     
-    def find_usb(self, hw_name, hw):
-        import usb
-        self.log.debug(f'finding USB {hw_name}')
-        vendor = hw['usb_vendor']
-        product = hw['usb_product']
-        devices = usb.core.find(find_all=True, idVendor=vendor, idProduct=product)
-        serial = hw['usb_serial']
-        for device in devices:
-            usb_serial = usb.util.get_string(device, device.iSerialNumber)
-            if usb_serial is None:
-                usb_serial = 0
-            if serial == usb_serial:
-                device_bus = str(device.bus).zfill(3)
-                device_address = str(device.address).zfill(3)
-                path = f'/dev/bus/usb/{device_bus}/{device_address}'
-                self.log.info(f'Found device {hw_name} at address {path}')
-                return path
-        raise Exception(f'Device {hw_name} of type USB with serial {hw["usb_serial"]} not found')
+    def find(self, hw_name, hw):
+        import pyudev
+
+        udev_context = pyudev.Context()
         
+        for device in udev_context.list_devices(SUBSYSTEM='usb'):
+            usb_vendor = int(device.get('ID_VENDOR_ID','0'), 16)
+            usb_product = int(device.get('ID_MODEL_ID','0'), 16)
+            devnames = (child.get('DEVNAME', None) if child.get('SUBSYSTEM') == hw['device_type'].lower() else None for child in device.children)
+                
+            if usb_vendor == hw['usb_vendor'] and usb_product == hw['usb_product']:
+                usb_serial = device.get('ID_SERIAL_SHORT', int(device.get('ID_REVISION'), 16))
+                if usb_serial == hw.get('usb_serial', hw.get('device_id', 0)):
+                    devname = next((devname for devname in devnames if devname is not None), device.get('DEVNAME', None))
+                    return f"{devname}:{hw.get('name_in_container')}" if hw.get('name_in_container') is not None else devname
+        raise Exception(f'Device {hw_name} not found')
     
-    def find_tty(self, hw_name, hw):
-        import usb
-        self.log.debug(f'finding TTY {hw_name}')
-        vendor = hw['usb_vendor']
-        product = hw['usb_product']
-        devices = usb.core.find(find_all=True, idVendor=vendor, idProduct=product)
-        serial = hw['usb_serial']
-        for device in devices:
-            usb_serial = usb.util.get_string(device, device.iSerialNumber)
-            if serial == usb_serial:
-                usb_manufacturer = usb.util.get_string(device, device.iManufacturer)
-                usb_product = usb.util.get_string(device, device.iProduct).replace(' ', '_')
-                path = f'/dev/serial/by-id/usb-{usb_manufacturer}_{usb_product}_{usb_serial}-if00-port0'
-                self.log.info(f'Found device {hw_name} at address {path}')
-                name_in_container = hw.get('name_in_container')
-                if name_in_container is not None:
-                    self.log.info(f'name in container is defined. renaming the device to /dev/{name_in_container}')
-                    path += f':/dev/{name_in_container}'
-                return path
-        raise Exception(f'Device {hw_name} of type TTY with serial {hw["usb_serial"]} not found')
-            
-    def __init__(self, config_file, log_level=logging.INFO):
+    def parse_yaml(self, config_file):
         hardwareDefinitionFields = ['device_type']
-        deviceTypes = {'HID': self.find_hid, 'USB': self.find_usb, 'TTY': self.find_tty}
         import yaml
-        
-        self.log = logging.getLogger('HWFinder')
-        self.log.setLevel(log_level)
         
         self.config_file = config_file
         with open(self.config_file, 'r') as file:
@@ -79,18 +34,14 @@ class HWFinder():
         for hw_name, hw in hardware.items():
             if not set(hardwareDefinitionFields).issubset(set(hw.keys())):
                 missing_content = set(hardwareDefinitionFields).difference(set(hw.keys()))
-                raise Exception(f'Missing mandatory hw definition field for {service_name}.{hw_name}: {missing_content}')
-            
-            device_type = hw['device_type']
-            
-            if device_type not in deviceTypes.keys():
-                raise Exception(f'Unknown device type {device_type}. Possible values are : {deviceTypes.keys()}')
-            
-            self.path_dict[hw_name] = deviceTypes[device_type](hw_name, hw)
+                raise Exception(f'Missing mandatory hw definition field for {service_name}.{hw_name}: {missing_content}') 
+            self.path_dict[hw_name] = self.find(hw_name, hw)
         
         self.log.debug(self.path_dict)
             
-                        
+    def __init__(self, config_file, log_level=logging.INFO):
+        self.log = logging.getLogger('HWFinder')
+        self.log.setLevel(log_level)
 
 if __name__ == '__main__':
     import argparse
@@ -106,7 +57,9 @@ if __name__ == '__main__':
     log = logging.getLogger(__file__)
     log.setLevel(logging.DEBUG if args.debug else logging.INFO)
     
-    finder = HWFinder(args.config, logging.DEBUG if args.debug else logging.INFO)
+    finder = HWFinder(logging.DEBUG if args.debug else logging.INFO)
+    
+    finder.parse_yaml(args.config)
 
     log.info(f'Output results in file {args.output}')
     with open(args.output, 'a' if args.append else 'w') as f:
