@@ -19,7 +19,7 @@ Install using pip:
 
 .. code:: python
 
-    pip install git+https://github.com/BCadet/hardwareFinder
+    pip install git+https://github.com/BCadet/pyHardwareFinder
 
 Usage
 =====
